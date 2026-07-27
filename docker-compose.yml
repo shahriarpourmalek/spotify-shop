@@ -1,0 +1,74 @@
+services:
+    app:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        image: ${APP_NAME}-app
+        container_name: ${APP_NAME}-app
+        restart: unless-stopped
+        working_dir: /var/www
+        environment:
+            XDEBUG_MODE: ${XDEBUG_MODE:-develop,debug}
+            XDEBUG_START_WITH_REQUEST: ${XDEBUG_START_WITH_REQUEST:-yes}
+            XDEBUG_CLIENT_HOST: ${XDEBUG_CLIENT_HOST:-host.docker.internal}
+            PHP_IDE_CONFIG: ${PHP_IDE_CONFIG:-serverName=nicard-plus}
+        volumes:
+            - .:/var/www
+            - ./docker/php/php.ini:/usr/local/etc/php/conf.d/php.ini
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
+        depends_on:
+            - mysql
+            - redis
+        networks:
+            - app-network
+
+    nginx:
+        image: nginx:stable-alpine
+        container_name: ${APP_NAME}-nginx
+        restart: unless-stopped
+        ports:
+            - "${APP_EXTERNAL_PORT:-8080}:80"
+        volumes:
+            - .:/var/www
+            - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+        depends_on:
+            - app
+        networks:
+            - app-network
+
+    redis:
+        image: redis:7-alpine
+        container_name: ${APP_NAME}-redis
+        restart: unless-stopped
+        ports:
+            - "${REDIS_EXTERNAL_PORT:-6380}:6379"
+        volumes:
+            - redis_data:/data
+        networks:
+            - app-network
+
+    mysql:
+        image: mysql:8.3
+        container_name: ${APP_NAME}-mysql
+        restart: unless-stopped
+        environment:
+            MYSQL_DATABASE: ${DB_DATABASE}
+            MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+            MYSQL_USER: ${DB_USERNAME:-laravel}
+            MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
+        ports:
+            - "${DB_EXTERNAL_PORT:-3307}:3306"
+        volumes:
+            - db_data:/var/lib/mysql
+        networks:
+            - app-network
+
+networks:
+    app-network:
+        name: ${APP_NAME}-network
+        driver: bridge
+
+volumes:
+    db_data:
+    redis_data:
