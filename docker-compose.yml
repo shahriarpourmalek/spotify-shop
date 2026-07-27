@@ -1,0 +1,135 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PHP_VERSION: ${PHP_VERSION}
+        APP_USER: ${APP_USER}
+        APP_UID: ${APP_UID}
+        APP_GID: ${APP_GID}
+        TIMEZONE: ${TIMEZONE}
+    container_name: ${APP_CONTAINER_NAME}
+    restart: unless-stopped
+    working_dir: /var/www/html
+    env_file:
+      - .env.docker
+    environment:
+      TZ: ${TIMEZONE}
+      APP_USER: ${APP_USER}
+      APP_ENV: ${APP_ENV}
+      APP_DEBUG: ${APP_DEBUG}
+      APP_URL: ${APP_URL}
+      DB_CONNECTION: ${DB_CONNECTION}
+      DB_HOST: ${MYSQL_HOST}
+      DB_PORT: ${MYSQL_INTERNAL_PORT}
+      DB_DATABASE: ${MYSQL_DATABASE}
+      DB_USERNAME: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_INTERNAL_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - ./:/var/www/html
+      - ./docker/php/custom.ini:/usr/local/etc/php/conf.d/99-custom.ini:ro
+      - ./docker/php/www.conf:/usr/local/etc/php-fpm.d/www.conf:ro
+    ports:
+      - "${APP_PORT}:${APP_INTERNAL_PORT}"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app_network
+
+  nginx:
+    image: nginx:${NGINX_VERSION}
+    container_name: ${NGINX_CONTAINER_NAME}
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    environment:
+      TZ: ${TIMEZONE}
+      NGINX_INTERNAL_PORT: ${NGINX_INTERNAL_PORT}
+      APP_CONTAINER_NAME: ${APP_CONTAINER_NAME}
+      APP_INTERNAL_PORT: ${APP_INTERNAL_PORT}
+      NGINX_CLIENT_MAX_BODY_SIZE: ${NGINX_CLIENT_MAX_BODY_SIZE}
+    volumes:
+      - ./:/var/www/html:ro
+      - ./docker/nginx/default.conf:/etc/nginx/templates/default.conf.template:ro
+    ports:
+      - "${NGINX_PORT}:${NGINX_INTERNAL_PORT}"
+    depends_on:
+      app:
+        condition: service_started
+    networks:
+      - app_network
+
+  mysql:
+    image: mysql:${MYSQL_VERSION}
+    container_name: ${MYSQL_CONTAINER_NAME}
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    environment:
+      TZ: ${TIMEZONE}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    command: --port=${MYSQL_INTERNAL_PORT} --default-authentication-plugin=mysql_native_password
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "${MYSQL_PORT}:${MYSQL_INTERNAL_PORT}"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -P $${MYSQL_INTERNAL_PORT:-3306} -u root -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: ${MYSQL_HEALTHCHECK_INTERVAL}
+      timeout: ${MYSQL_HEALTHCHECK_TIMEOUT}
+      retries: ${MYSQL_HEALTHCHECK_RETRIES}
+      start_period: ${MYSQL_HEALTHCHECK_START_PERIOD}
+    networks:
+      - app_network
+
+  redis:
+    image: redis:${REDIS_VERSION}
+    container_name: ${REDIS_CONTAINER_NAME}
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    environment:
+      TZ: ${TIMEZONE}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_INTERNAL_PORT: ${REDIS_INTERNAL_PORT}
+    command: >
+      sh -c 'if [ -n "$${REDIS_PASSWORD}" ]; then
+        exec redis-server --port "$${REDIS_INTERNAL_PORT}" --appendonly yes --requirepass "$${REDIS_PASSWORD}";
+      else
+        exec redis-server --port "$${REDIS_INTERNAL_PORT}" --appendonly yes;
+      fi'
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT}:${REDIS_INTERNAL_PORT}"
+    healthcheck:
+      test: ["CMD-SHELL", "if [ -n \"$${REDIS_PASSWORD}\" ]; then redis-cli -p $${REDIS_INTERNAL_PORT:-6379} -a \"$${REDIS_PASSWORD}\" ping | grep PONG; else redis-cli -p $${REDIS_INTERNAL_PORT:-6379} ping | grep PONG; fi"]
+      interval: ${REDIS_HEALTHCHECK_INTERVAL}
+      timeout: ${REDIS_HEALTHCHECK_TIMEOUT}
+      retries: ${REDIS_HEALTHCHECK_RETRIES}
+      start_period: ${REDIS_HEALTHCHECK_START_PERIOD}
+    networks:
+      - app_network
+
+volumes:
+  mysql_data:
+    name: ${COMPOSE_PROJECT_NAME}_mysql_data
+  redis_data:
+    name: ${COMPOSE_PROJECT_NAME}_redis_data
+
+networks:
+  app_network:
+    name: ${COMPOSE_PROJECT_NAME}_network
+    driver: bridge
